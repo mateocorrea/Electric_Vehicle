@@ -1,12 +1,20 @@
 //The Wire library is used for I2C communication
 #include <Wire.h>
 #include <Servo.h>
+#include <SFE_MMA8452Q.h>
 
+MMA8452Q accel;
 
 int runTime = 19000; // approximately 1000 for each foot
+float goalDistance = 10.0; // meters
 int loopTime = 25;//50;
+float distance = 0.0;
+float velocity = 0.0;
+float old_velocity = 0.0;
+float old_acceleration = 0.0;
 float kp = 1.0;
 float ki = 0.000;
+float kd = 0.0;
 float leftCorrection = 0;//0.5;
 float integral = 0.0;
 
@@ -20,7 +28,7 @@ int turnThreshold = 10;
 const int buttonPin = 2; 
 float angle = 0;
 // stuff i have no idea about
-char WHO_AM_I = 0x00;
+char WHO_AM_I_GYRO = 0x00;
 char SMPLRT_DIV= 0x15;
 char DLPF_FS = 0x16;
 char GYRO_ZOUT_H = 0x21;
@@ -38,20 +46,22 @@ void setup()
   //Create a serial connection using a 9600bps baud rate.
   Serial.begin(9600);
 
+  /* GYRO INITIATION */
   //Initialize the I2C communication. This will set the Arduino up as the 'Master' device.
   Wire.begin();
-
   //Read the WHO_AM_I register and print the result
   char id=0; 
-  id = itgRead(itgAddress, 0x00);  
+  id = itgRead(itgAddress, WHO_AM_I_GYRO);  
   Serial.print("ID: ");
   Serial.println(id, HEX);
-
   //Configure the gyroscope
   //Set the gyroscope scale for the outputs to +/-2000 degrees per second
   itgWrite(itgAddress, DLPF_FS, (DLPF_FS_SEL_0|DLPF_FS_SEL_1|DLPF_CFG_0));
   //Set the sample rate to 100 hz
   itgWrite(itgAddress, SMPLRT_DIV, 9);
+
+  /* ACCEL INITIATION */
+  accel.init();
 
   left.attach(11);
   left.write(90);  // set servo to mid-point
@@ -72,21 +82,26 @@ void loop()
       readyToRun = false;
       angle = 0;
       integral = 0;
-      for(int i = 0; i < runTime/loopTime; i++)
+      //for(int i = 0; i < runTime/loopTime; i++)
+      while(distance < goalDistance)
       {
         float zRate;
+        float oldAngle = 0;
         zRate = readZ();
         Serial.println(zRate);
 
         angle += zRate / (1000 / loopTime);  // Divide the degrees per second by the amount of times looping each second
-        integral = integral + angle;
+        integral = integral + angle * loopTime;
         if(abs(integral) < 50)
-        {
+          integral = angle;
+        if((angle > 0) && (integral < 0))
           integral = 0;
-        }
+        if((angle < 0) && (integral > 0))
+          integral = angle;
 
+        float derivative = (angle - oldAngle) / loopTime;
 
-        int correction = (kp * angle) + (ki * integral);
+        int correction = (kp * angle) + (ki * integral) + (kd * derivative);
 
         int leftSpeed = 0 + standardSpeed - correction;
 
@@ -105,8 +120,22 @@ void loop()
         
         left.write(leftSpeed);
         right.write(rightSpeed);
+
+        accel.read();
+        printCalculatedAccels();
+
+        velocity = velocity + ((accel.x + old_acceleration)/2.0 * loopTime);
+
+        distance = distance + ((velocity + old_velocity)/2.0 * loopTime);
+
+        Serial.print("distance traveled: ");
+        Serial.println(distance);
+
+        old_velocity = velocity;
+        old_acceleration = accel.x;
+        oldAngle = angle;
       
-        //Wait 10ms before reading the values again. (Remember, the output rate was set to 100hz and 1reading per 10ms = 100hz.)
+        //Wait ms before reading the values again. (Remember, the output rate was set to 100hz and 1reading per 10ms = 100hz.)
         delay(loopTime);
       }
       left.write(90);
@@ -174,3 +203,20 @@ float readZ(void)
 
   return data;
 }
+
+void printCalculatedAccels()
+{ 
+  Serial.print(accel.cx, 3);
+  Serial.print("\t");
+  Serial.print(accel.cy, 3);
+  Serial.print("\t");
+  Serial.print(accel.cz, 3);
+  Serial.print("\t");
+}
+
+/* Convert arbitrary distance unit to meters */
+float distanceConversion(float distance)
+{
+  return distance * 18.1;
+}
+
