@@ -5,9 +5,9 @@
 
 MMA8452Q accel;
 
-int runTime = 19000; // approximately 1000 for each foot
-float goalDistance = 10.0; // meters
-int loopTime = 25;//50;
+int runTime = 20000; // approximately 1000 for each foot
+float goalDistance = 1.0; // meters
+int loopTime = 50;//50;
 float distance = 0.0;
 float velocity = 0.0;
 float old_velocity = 0.0;
@@ -18,6 +18,8 @@ float kd = 0.0;
 float leftCorrection = 0;//0.5;
 float integral = 0.0;
 
+float averageXAccel = 0.0;
+float accelerationX = 0.0;
 
 Servo left;
 Servo right;
@@ -45,10 +47,11 @@ void setup()
 {
   //Create a serial connection using a 9600bps baud rate.
   Serial.begin(9600);
-
+  /* ACCEL INITIATION */
+  accel.init();
   /* GYRO INITIATION */
   //Initialize the I2C communication. This will set the Arduino up as the 'Master' device.
-  Wire.begin();
+  //Wire.begin();
   //Read the WHO_AM_I register and print the result
   char id=0; 
   id = itgRead(itgAddress, WHO_AM_I_GYRO);  
@@ -60,35 +63,32 @@ void setup()
   //Set the sample rate to 100 hz
   itgWrite(itgAddress, SMPLRT_DIV, 9);
 
-  /* ACCEL INITIATION */
-  accel.init();
-
+ 
   left.attach(11);
   left.write(90);  // set servo to mid-point
   right.attach(10);
   right.write(90);
   pinMode(buttonPin, INPUT);
   readyToRun = true;
-
-  
 }
 
 //The loop section of the sketch will read the X,Y and Z output rates from the gyroscope and output them in the Serial Terminal
 void loop()
-{ 
+{
+   fixAverageAccel();
   if(digitalRead(buttonPin) == HIGH) {
     if(!justClicked && readyToRun) {
       justClicked = true;
       readyToRun = false;
       angle = 0;
       integral = 0;
-      //for(int i = 0; i < runTime/loopTime; i++)
+       // for(int i = 0; i < runTime/loopTime; i++)
       while(distance < goalDistance)
       {
         float zRate;
         float oldAngle = 0;
         zRate = readZ();
-        Serial.println(zRate);
+        //Serial.println(zRate);
 
         angle += zRate / (1000 / loopTime);  // Divide the degrees per second by the amount of times looping each second
         integral = integral + angle * loopTime;
@@ -111,28 +111,34 @@ void loop()
           leftSpeed = 90;
         if(rightSpeed < 90)
           rightSpeed = 90;
-        Serial.print("left: "); 
+        /*Serial.print("left: "); 
         Serial.println(leftSpeed);
         Serial.print("right: ");
         Serial.println(rightSpeed);
         Serial.print("angle: ");
-        Serial.println(angle);
+        Serial.println(angle);*/
         
         left.write(leftSpeed);
         right.write(rightSpeed);
 
+        
         accel.read();
-        printCalculatedAccels();
-
-        velocity = velocity + ((accel.x + old_acceleration)/2.0 * loopTime);
-
-        distance = distance + ((velocity + old_velocity)/2.0 * loopTime);
-
+        accelerationX = convert(accel.cx - averageXAccel);
+        /*if(accelerationX < 0.005)
+          accelerationX = 0.0;*/
+        Serial.print("Acceleration: ");
+        Serial.print(accelerationX);
+        Serial.println( "m/s^2");
+        Serial.print("Velocity: ");
+        velocity = old_velocity + ((accelerationX + old_acceleration)/2.0 * loopTime/1000);
+        Serial.print(velocity);
+        Serial.println(" m/s");
+        distance = distance + ((velocity + old_velocity)/2.0 * loopTime/1000);
         Serial.print("distance traveled: ");
-        Serial.println(distance);
-
+        Serial.print(distance);
+        Serial.println(" m");
         old_velocity = velocity;
-        old_acceleration = accel.x;
+        old_acceleration = accelerationX;
         oldAngle = angle;
       
         //Wait ms before reading the values again. (Remember, the output rate was set to 100hz and 1reading per 10ms = 100hz.)
@@ -144,12 +150,46 @@ void loop()
     }
   } else {
     justClicked = false;
+    digitalWrite(13, HIGH);
+    delay(1000);
+    digitalWrite(13, LOW);
+    delay(1000);
   }
   
 }
 
+void printCalculatedAccels()
+{ 
+  Serial.print(accel.cx, 3);
+  Serial.print("\t");
+  Serial.print(accel.cy, 3);
+  Serial.print("\t");
+  Serial.print(accel.cz, 3);
+  Serial.print("\t");
+  Serial.println();
+}
 
-////////////////
+/* Convert arbitrary distance unit to meters */
+float convert(float acc)
+{
+  return acc * 1.5;
+}
+
+void fixAverageAccel()
+{
+  float sum = 0.0;
+  for(int i = 0; i < 200; i++)
+  {
+    if(accel.available())
+      accel.read();
+    sum += accel.cx;
+    delay(10);
+  }
+
+  averageXAccel = 0;//(sum / 200.0) * 1.04;
+}
+
+
 void itgWrite(char address, char registerAddress, char data)
 {
   //Initiate a communication sequence with the desired i2c device
@@ -161,37 +201,29 @@ void itgWrite(char address, char registerAddress, char data)
   //End the communication sequence
   Wire.endTransmission();
 }
-
 unsigned char itgRead(char address, char registerAddress)
 {
   //This variable will hold the contents read from the i2c device.
   unsigned char data=0;
-
   //Send the register address to be read.
   Wire.beginTransmission(address);
   //Send the Register Address
   Wire.write(registerAddress);
   //End the communication sequence.
   Wire.endTransmission();
-
   //Ask the I2C device for data
   Wire.beginTransmission(address);
   Wire.requestFrom(address, 1);
-
   //Wait for a response from the I2C device
   if(Wire.available()){
     //Save the data sent from the I2C device
     data = Wire.read();
   }
-
   //End the communication sequence.
   Wire.endTransmission();
-
   //Return the data read during the operation
   return data;
 }
-
-
 //This function is used to read the Z-Axis rate of the gyroscope. The function returns the ADC value from the Gyroscope
 //NOTE: This value is NOT in degrees per second.
 //Usage: int zRate = readZ();
@@ -203,20 +235,3 @@ float readZ(void)
 
   return data;
 }
-
-void printCalculatedAccels()
-{ 
-  Serial.print(accel.cx, 3);
-  Serial.print("\t");
-  Serial.print(accel.cy, 3);
-  Serial.print("\t");
-  Serial.print(accel.cz, 3);
-  Serial.print("\t");
-}
-
-/* Convert arbitrary distance unit to meters */
-float distanceConversion(float distance)
-{
-  return distance * 18.1;
-}
-
