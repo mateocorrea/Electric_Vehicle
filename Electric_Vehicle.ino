@@ -6,15 +6,16 @@
 MMA8452Q accel;
 
 int runTime = 20000; // approximately 1000 for each foot
-float goalDistance = 1.0; // meters
+float goalDistance = 2.159; // meters
+float conversionFactor = 5.01; // bigger makes it travel less
 int loopTime = 50;//50;
 float distance = 0.0;
 float velocity = 0.0;
 float old_velocity = 0.0;
 float old_acceleration = 0.0;
-float kp = 1.0;
-float ki = 0.000;
-float kd = 0.0;
+float kp = 0.9;
+float ki = 0.0003;
+float kd = 0.05;
 float leftCorrection = 0;//0.5;
 float integral = 0.0;
 
@@ -64,9 +65,9 @@ void setup()
   itgWrite(itgAddress, SMPLRT_DIV, 9);
 
  
-  left.attach(11);
+  left.attach(10);
   left.write(90);  // set servo to mid-point
-  right.attach(10);
+  right.attach(11);
   right.write(90);
   pinMode(buttonPin, INPUT);
   readyToRun = true;
@@ -105,7 +106,7 @@ void loop()
 
         int leftSpeed = 0 + standardSpeed - correction;
 
-        int rightSpeed = 180 - standardSpeed + 2 - correction;
+        int rightSpeed = 180 - standardSpeed - correction;
        
         if(leftSpeed > 90)
           leftSpeed = 90;
@@ -123,7 +124,7 @@ void loop()
 
         
         accel.read();
-        accelerationX = convert(accel.cx - averageXAccel);
+        accelerationX = (accel.cx - averageXAccel) * conversionFactor;
         /*if(accelerationX < 0.005)
           accelerationX = 0.0;*/
         Serial.print("Acceleration: ");
@@ -169,11 +170,6 @@ void printCalculatedAccels()
   Serial.println();
 }
 
-/* Convert arbitrary distance unit to meters */
-float convert(float acc)
-{
-  return acc * 1.5;
-}
 
 void fixAverageAccel()
 {
